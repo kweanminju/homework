@@ -1,0 +1,74 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <pcap.h>
+#include <arpa/inet.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+#include <netinet/ether.h>
+
+/* Ethernet header */
+struct ethheader {
+  u_char  ether_dhost[6]; 
+  u_char  ether_shost[6]; 
+  u_short ether_type;     
+};
+
+void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
+{
+  struct ethheader *eth = (struct ethheader *)packet;
+
+  // Ethernet print
+  printf("Ethernet src mac: %02x:%02x:%02x:%02x:%02x:%02x\n", 
+         eth->ether_shost[0], eth->ether_shost[1], eth->ether_shost[2],
+         eth->ether_shost[3], eth->ether_shost[4], eth->ether_shost[5]);
+
+  printf("Ethernet dst mac: %02x:%02x:%02x:%02x:%02x:%02x\n", 
+         eth->ether_dhost[0], eth->ether_dhost[1], eth->ether_dhost[2],
+         eth->ether_dhost[3], eth->ether_dhost[4], eth->ether_dhost[5]);
+
+  if (ntohs(eth->ether_type) == ETHERTYPE_IP) { // IP packet check
+    struct ip *ip = (struct ip *)(packet + sizeof(struct ethheader));
+
+    // IP packet print
+    printf("src ip : %s\n", inet_ntoa(ip->ip_src));
+    printf("dst ip: %s\n", inet_ntoa(ip->ip_dst));
+
+    if (ip->ip_p == IPPROTO_TCP) { // TCP pakcet check
+      struct tcphdr *tcp = (struct tcphdr *)(packet + sizeof(struct ethheader) + ip->ip_hl * 4);
+
+      // TCP packet print
+      printf("TCP src port: %u\n", ntohs(tcp->th_sport));
+      printf("TCP dst port: %u\n", ntohs(tcp->th_dport));
+    }
+  }
+}
+
+int main()
+{
+  pcap_t *handle;
+  char errbuf[PCAP_ERRBUF_SIZE];
+  struct bpf_program fp;
+  char filter_exp[] = "tcp"; // all ip packet chapture
+  bpf_u_int32 net;
+
+  // step 1: 네트워크 인터페이스 "ens33"를 사용하여 라이브 pcap 세션 open
+  handle = pcap_open_live("ens33", BUFSIZ, 1, 1000, errbuf);
+
+  if (handle == NULL) {
+    fprintf(stderr, "Error: %s\n", errbuf);
+    return 2;
+  }
+
+  // step 2: filter_exp를 BPF 가상 코드로 컴파일
+  pcap_compile(handle, &fp, filter_exp, 0, net);
+  if (pcap_setfilter(handle, &fp) != 0) {
+      pcap_perror(handle, "Error:");
+      return 2;
+  }
+
+  // step 3: 패킷 캡처
+  pcap_loop(handle, -1, got_packet, NULL);
+
+  pcap_close(handle); // 핸들 close
+  return 0;
+}
